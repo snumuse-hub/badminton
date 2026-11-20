@@ -79,6 +79,22 @@ select.btn{appearance:none;}
 .help b{color:var(--text);}
 .opts{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--muted);margin-top:8px;}
 .opts label{display:flex;gap:4px;align-items:center;cursor:pointer;}
+.card.wide{grid-column:1/-1;}
+.prog{position:absolute;inset:0;background:rgba(4,10,20,.72);display:none;align-items:center;justify-content:center;z-index:5;}
+.prog.show{display:flex;}
+.pbox{background:var(--panel);border:1px solid var(--accent);border-radius:12px;padding:16px 18px;width:min(360px,86%);display:flex;flex-direction:column;gap:10px;align-items:stretch;text-align:center;}
+.pbox small{color:var(--muted);font-size:12px;}
+.pbar{height:8px;background:#22324d;border-radius:4px;overflow:hidden;}
+.pbar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s;}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:10px;}
+.stat{background:#132542;border-radius:9px;padding:8px 10px;}
+.stat .k{font-size:11px;color:var(--muted);}
+.stat .v{font-size:24px;font-weight:800;font-variant-numeric:tabular-nums;}
+.stat .v small{font-size:12px;color:var(--muted);font-weight:500;margin-left:3px;}
+.chips{display:flex;flex-wrap:wrap;gap:5px;}
+.chip{font-size:12px;padding:4px 8px;border-radius:14px;border:1px solid var(--line);background:#132542;color:var(--text);cursor:pointer;font-variant-numeric:tabular-nums;}
+.chip.weak{border-color:#ffb340;color:#ffcf80;}
+.chip:hover{border-color:var(--accent);}
 </style>
 </head>
 <body>
@@ -93,7 +109,12 @@ select.btn{appearance:none;}
     <button class="btn" id="btnFile">🎞️ 영상 불러오기</button>
     <input type="file" id="fileInput" accept="video/*">
     <span class="sep"></span>
+    <select class="btn" id="selRange" title="보정 범위" style="display:none">
+      <option value="half" selected>보정 범위: 내 쪽 절반</option>
+      <option value="full">보정 범위: 탁구대 전체</option>
+    </select>
     <button class="btn" id="btnCalib" disabled>📐 보정</button>
+    <button class="btn primary" id="btnBall" style="display:none" disabled>🏓 공 분석</button>
     <select class="btn" id="selModel" title="AI 모델">
       <option value="lite">모델: 빠름</option>
       <option value="full" selected>모델: 표준</option>
@@ -111,10 +132,18 @@ select.btn{appearance:none;}
     </div>
     <div class="hud" id="hud" style="display:none">
       <div class="tile"><div class="k">RALLY TIME</div><div class="v" id="hudTime">00:00.00</div></div>
-      <div class="tile"><div class="k">SHOT COUNT</div><div class="v"><span id="hudShots">0</span><span class="u">SHOT</span></div></div>
-      <div class="tile"><div class="k">RALLY</div><div class="v"><span id="hudRally">0</span><span class="u">#</span></div></div>
+      <div class="tile"><div class="k" id="hudK2">SHOT COUNT</div><div class="v"><span id="hudShots">0</span><span class="u" id="hudU2">SHOT</span></div></div>
+      <div class="tile"><div class="k" id="hudK3">RALLY</div><div class="v"><span id="hudRally">0</span><span class="u" id="hudU3">#</span></div></div>
     </div>
     <div class="msg" id="msg"></div>
+    <div class="prog" id="prog">
+      <div class="pbox">
+        <b id="progTxt">공 분석 준비 중…</b>
+        <div class="pbar"><i id="progBar"></i></div>
+        <small>영상을 처음부터 끝까지 한 번 재생하며 공을 찾아요</small>
+        <button class="btn" id="btnBallCancel">취소</button>
+      </div>
+    </div>
   </div>
 
   <div class="player" id="player">
@@ -134,6 +163,14 @@ select.btn{appearance:none;}
   </div>
 
   <div class="panels">
+    <div class="card wide" id="ballCard" style="display:none">
+      <h3>BALL ANALYSIS <small>자동 인식이라 몇 개는 놓치거나 더 셀 수 있어요</small></h3>
+      <div id="ballRes"></div>
+      <div class="opts">
+        <label><input type="checkbox" id="optBounceKeep" checked> 지난 바운드 계속 표시</label>
+        <label><input type="checkbox" id="optBallTrail" checked> 공 궤적 표시</label>
+      </div>
+    </div>
     <div class="card">
       <h3>PLAYERS <small>이름을 누르면 바꿀 수 있어요</small></h3>
       <div id="players"></div>
@@ -161,12 +198,15 @@ select.btn{appearance:none;}
 
 <script type="module">
 import { PoseLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+import { PROC_W, luminance, detectCandidates, analyzeRally, ballTrack } from "./ball-core.js";
 
 const WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 const MODEL = k => `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_${k}/float16/1/pose_landmarker_${k}.task`;
 
 // ---------- 종목 설정 ----------
-// 좌표계: x = 가로(폭), y = 세로(길이, 0 = 먼 쪽, L = 카메라 쪽), 단위 m
+// 좌표계: x = 가로(폭), y = 세로(길이), 단위 m
+//   배드민턴: y 0 = 카메라에서 먼 쪽 끝선
+//   탁구:     y 0 = 내 쪽(선수 쪽) 끝선, 네트는 y = 1.37
 const SPORTS = {
   badminton: {
     name: '배드민턴', emoji: '🏸', W: 6.10, L: 13.40,
@@ -176,6 +216,10 @@ const SPORTS = {
     zone: 1.5,                         // 이 거리보다 코트에서 멀면 다른 사람으로 보고 무시
     ringR: 0.55, maxV: 9, actV: 4,
     tip: '코트 뒤쪽 높은 곳에서 코트 전체가 보이게 찍으면 가장 정확해요.',
+    mapLabels: ['먼 쪽', '가까운 쪽 (카메라)'],
+    calibOrder: '<b>먼 쪽 왼쪽 → 먼 쪽 오른쪽 → 가까운 쪽 오른쪽 → 가까운 쪽 왼쪽</b> 모서리',
+    calibSteps: () => ['먼 쪽 왼쪽', '먼 쪽 오른쪽', '가까운 쪽 오른쪽', '가까운 쪽 왼쪽'].map(t => `복식 코트 바깥 ${t} 모서리`),
+    corners() { return [[0, 0], [this.W, 0], [this.W, this.L], [0, this.L]]; },
     lines() {
       const W = this.W, L = this.L, N = L / 2;
       return [[0, 0, W, 0], [W, 0, W, L], [W, L, 0, L], [0, L, 0, 0],
@@ -193,7 +237,13 @@ const SPORTS = {
     view: [-2.6, 4.125, -3.2, 5.94],
     zone: 3.5,
     ringR: 0.4, maxV: 7, actV: 2.5,
-    tip: '탁구대 끝 뒤쪽 높은 곳에서 탁구대와 선수 전체가 보이게 찍으세요.',
+    tip: '탁구대 옆에서 탁구대와 선수가 모두 보이게 고정해서 찍으세요. 공 분석은 옆에서 찍은 영상이 가장 정확해요.',
+    mapLabels: ['내 쪽', '상대 쪽'],
+    calibOrder: '<b>① 내 쪽 끝선의 한쪽 모서리 → ② 같은 끝선의 다른 모서리 → ③ ②에서 이어진 네트 아래 지점(전체 보정이면 상대 쪽 끝 모서리) → ④ 나머지 한 곳</b>',
+    calibSteps: range => ['내 쪽 끝선의 한쪽 모서리', '같은 끝선의 다른 모서리',
+      range === 'full' ? '②에서 이어진 상대 쪽 끝 모서리' : '②에서 이어진 네트 아래 지점',
+      range === 'full' ? '나머지 상대 쪽 끝 모서리' : '나머지 네트 아래 지점'],
+    corners(range) { const Lc = range === 'full' ? this.L : this.L / 2; return [[0, 0], [this.W, 0], [this.W, Lc], [0, Lc]]; },
     lines() {
       const W = this.W, L = this.L, N = L / 2;
       return [[0, 0, W, 0], [W, 0, W, L], [W, L, 0, L], [0, L, 0, 0],
@@ -227,14 +277,18 @@ $('tip').textContent = SP.tip;
 $('btnCalib').textContent = `📐 ${SP.surface} 보정`;
 $('mapTitle').textContent = SP.mapTitle;
 $('lblLines').textContent = `${SP.surface} 라인 표시`;
+const isTT = sportKey === 'tabletennis';
 $('help').innerHTML = `
   <b>1.</b> 카메라를 켜거나 영상을 불러옵니다.<br>
-  <b>2.</b> <b>📐 ${SP.surface} 보정</b>을 누르고 ${SP.calibWhat} 모서리 4곳을 순서대로 탭합니다:
-  <b>먼 쪽 왼쪽 → 먼 쪽 오른쪽 → 가까운 쪽 오른쪽 → 가까운 쪽 왼쪽</b>.<br>
-  ${SP.surfaceH > 0 ? '탁구대 높이(76cm)를 계산에 넣어 선수가 서 있는 바닥 위치를 자동으로 구해요. 모서리를 정확히 찍을수록 정확해집니다.<br>' : ''}
-  <b>3.</b> 보정이 끝나면 이동 거리(m), 속도, ${SP.mapTitle === 'TABLE MAP' ? '탁구대' : '코트'} 맵이 실제 단위로 계산됩니다.<br>
-  <b>4.</b> 샷은 <b>+1 샷</b> 버튼으로 셉니다. 공·셔틀콕 자동 추적은 지원하지 않아요.<br>
+  <b>2.</b> <b>📐 ${SP.surface} 보정</b>을 누르고 ${SP.calibWhat} 4곳을 순서대로 탭합니다: ${SP.calibOrder}.<br>
+  ${isTT ? '탁구대 반대쪽이 화면에 다 안 보이면 <b>보정 범위: 내 쪽 절반</b>으로 두고 네트 아래 지점을 찍으세요. 탁구대 높이(76cm)를 계산에 넣어 선수 바닥 위치도 구해요.<br>' : ''}
+  <b>3.</b> 보정이 끝나면 이동 거리(m), 속도, ${isTT ? '탁구대' : '코트'} 맵이 실제 단위로 계산됩니다.<br>
+  ${isTT
+    ? '<b>4.</b> 영상을 불러온 뒤 <b>🏓 공 분석</b>을 누르면 스트로크 횟수와 공 바운드 위치를 자동으로 찾아요. 재생하면 바운드 위치에 원이 표시됩니다. (카메라를 고정해서 찍은 영상만 가능)<br><b>+1 샷</b> 버튼으로 직접 셀 수도 있어요.<br>'
+    : '<b>4.</b> 샷은 <b>+1 샷</b> 버튼으로 셉니다. 셔틀콕 자동 추적은 지원하지 않아요.<br>'}
   <b>활동량</b>은 최근 이동 속도로 계산한 0~100 지수입니다.`;
+if (isTT) { $('selRange').style.display = ''; $('btnBall').style.display = ''; $('selRange').value = store.get('range', 'half'); }
+const calibRange = () => isTT ? $('selRange').value : 'full';
 
 // ---------- 상태 ----------
 let landmarker = null, modelKind = $('selModel').value, loadingModel = null;
@@ -243,6 +297,7 @@ let stream = null;
 let Hs = null, Hsinv = null;  // 보정 면(코트/탁구대): 화면 → 실제, 실제 → 화면
 let Hf = null, Hfinv = null;  // 바닥면 (선수가 서 있는 면)
 let calibPts = [], calibrating = false;
+let ball = null, ballBusy = false, ballCancel = false;   // 공 분석 결과
 let lastVideoTime = -1, lastTs = 0;
 let names = store.get('names', ['선수1', '선수2', '선수3', '선수4']);
 
@@ -299,7 +354,7 @@ function inverse3(M) {
 
 // 높이가 있는 면(탁구대 윗면)의 호모그래피에서 카메라를 추정해 바닥면 호모그래피를 만든다.
 // 주점 = 화면 중앙, 정사각 픽셀을 가정하고 초점거리를 직교 조건으로 구한다.
-function floorFromRaised(G, w, h, dz) {
+function floorFromRaised(G, w, h, dz, rw, rl) {
   const cx = w / 2, cy = h / 2;
   const g = [G[0] - cx * G[6], G[1] - cx * G[7], G[2] - cx * G[8], G[3] - cy * G[6], G[4] - cy * G[7], G[5] - cy * G[8], G[6], G[7], G[8]];
   const [a1, b1, c1] = [g[0], g[3], g[6]], [a2, b2, c2] = [g[1], g[4], g[7]];
@@ -314,7 +369,7 @@ function floorFromRaised(G, w, h, dz) {
   let r3 = [r1[1] * r2[2] - r1[2] * r2[1], r1[2] * r2[0] - r1[0] * r2[2], r1[0] * r2[1] - r1[1] * r2[0]];
   const n3 = nrm(r3); r3 = r3.map(v => v / n3);
   // 바닥은 화면에서 더 아래쪽으로 보이는 방향
-  const projY = Z => { const p = [0, 1, 2].map(i => r1[i] * CW / 2 + r2[i] * CL / 2 + r3[i] * Z + t[i]); return f * p[1] / p[2]; };
+  const projY = Z => { const p = [0, 1, 2].map(i => r1[i] * rw / 2 + r2[i] * rl / 2 + r3[i] * Z + t[i]); return f * p[1] / p[2]; };
   const s = projY(dz) > projY(-dz) ? 1 : -1;
   const tf = t.map((v, i) => v + r3[i] * s * dz);
   return [f * r1[0] + cx * r1[2], f * r2[0] + cx * r2[2], f * tf[0] + cx * tf[2],
@@ -322,17 +377,17 @@ function floorFromRaised(G, w, h, dz) {
           r1[2], r2[2], tf[2]];
 }
 
-const CORNERS = [[0, 0], [CW, 0], [CW, CL], [0, CL]];
 function setCalibration(pts) {
-  Hs = homography(pts, CORNERS); Hsinv = homography(CORNERS, pts);
+  const C = SP.corners(calibRange());
+  Hs = homography(pts, C); Hsinv = homography(C, pts);
   if (Hs && Hsinv) {
-    if (SP.surfaceH > 0) { Hfinv = floorFromRaised(Hsinv, ov.width, ov.height, SP.surfaceH); Hf = inverse3(Hfinv); }
+    if (SP.surfaceH > 0) { Hfinv = floorFromRaised(Hsinv, ov.width, ov.height, SP.surfaceH, C[2][0], C[2][1]); Hf = inverse3(Hfinv); }
     else { Hf = Hs; Hfinv = Hsinv; }
   }
   if (!Hs || !Hsinv || !Hf || !Hfinv) { Hs = Hsinv = Hf = Hfinv = null; msg('보정 실패: 점을 다시 찍어주세요', 3000); return false; }
   calibPts = pts; return true;
 }
-function clearCalibration() { Hs = Hsinv = Hf = Hfinv = null; }
+function clearCalibration() { Hs = Hsinv = Hf = Hfinv = null; clearBall(); }
 
 // ---------- 모델 ----------
 async function loadModel(kind) {
@@ -368,6 +423,7 @@ function stopSource() {
   video.removeAttribute('src'); video.srcObject = null;
 }
 async function startCamera() {
+  if (ballBusy) return;
   stopSource();
   try {
     stream = await navigator.mediaDevices.getUserMedia({
@@ -383,6 +439,7 @@ async function startCamera() {
   onSourceReady('cam');
 }
 function startFile(file) {
+  if (ballBusy) return;
   stopSource();
   source = 'file'; video.src = URL.createObjectURL(file);
   $('btnFile').classList.add('on'); $('btnCam').classList.remove('on');
@@ -395,7 +452,10 @@ function onSourceReady(kind) {
   $('empty').style.display = 'none'; $('hud').style.display = 'flex';
   $('btnCalib').disabled = false;
   resetStats(false);
+  clearBall();
+  $('btnBall').disabled = kind !== 'file';
   const saved = store.get('calib_' + kind, null);
+  if (saved && isTT && saved.range) $('selRange').value = saved.range;
   if (saved && saved.w === ov.width && saved.h === ov.height && setCalibration(saved.pts)) {
     msg(`저장된 ${SP.surface} 보정을 불러왔어요. 화면이 바뀌었다면 다시 보정하세요.`, 3500);
   } else { clearCalibration(); calibPts = []; if (!calibrating) msg(`📐 ${SP.surface} 보정을 하면 이동 거리(m)를 잴 수 있어요`, 4000); }
@@ -403,26 +463,29 @@ function onSourceReady(kind) {
 }
 
 // ---------- 보정 ----------
-const CALIB_TXT = ['먼 쪽 왼쪽', '먼 쪽 오른쪽', '가까운 쪽 오른쪽', '가까운 쪽 왼쪽'];
+// 받침을 보고 을/를 고르기
+const eulReul = w => { const c = w.charCodeAt(w.length - 1); return c >= 0xAC00 && c <= 0xD7A3 && (c - 0xAC00) % 28 ? '을' : '를'; };
+const calibMsg = i => { const w = SP.calibSteps(calibRange())[i]; return `${i + 1}/4 · ${w}${eulReul(w)} 탭하세요`; };
 function startCalib() {
+  if (ballBusy) return;
   calibrating = true; calibPts = []; clearCalibration();
   if (source === 'file') video.pause();
   ov.classList.add('calib'); $('btnCalib').classList.add('on');
-  msg(`1/4 · ${SP.calibWhat} ${CALIB_TXT[0]} 모서리를 탭하세요`);
+  msg(calibMsg(0));
 }
 function cancelCalib() {
   calibrating = false; ov.classList.remove('calib'); $('btnCalib').classList.remove('on'); msg('', 0);
   const saved = store.get('calib_' + source, null);
-  if (saved && saved.w === ov.width && saved.h === ov.height) setCalibration(saved.pts);
+  if (saved && saved.w === ov.width && saved.h === ov.height && (!isTT || (saved.range || 'half') === calibRange())) setCalibration(saved.pts);
 }
 ov.addEventListener('pointerdown', e => {
   if (!calibrating) return;
   const r = ov.getBoundingClientRect();
   calibPts.push([(e.clientX - r.left) / r.width * ov.width, (e.clientY - r.top) / r.height * ov.height]);
-  if (calibPts.length < 4) { msg(`${calibPts.length + 1}/4 · ${CALIB_TXT[calibPts.length]} 모서리를 탭하세요`); return; }
+  if (calibPts.length < 4) { msg(calibMsg(calibPts.length)); return; }
   calibrating = false; ov.classList.remove('calib'); $('btnCalib').classList.remove('on');
   if (setCalibration(calibPts.slice())) {
-    store.set('calib_' + source, { w: ov.width, h: ov.height, pts: calibPts });
+    store.set('calib_' + source, { w: ov.width, h: ov.height, pts: calibPts, range: calibRange() });
     resetStats(false);
     msg(`${SP.surface} 보정 완료! 라인이 ${SP.surface}와 맞는지 확인하세요`, 3500);
   }
@@ -536,6 +599,7 @@ function draw(t) {
     });
     if (calibPts.length > 1) { ctx.beginPath(); calibPts.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p)); ctx.stroke(); }
   }
+  drawBall(s);
   for (const p of players) {
     if (!p.active || !p.img) continue;
     const c = COLORS[p.id];
@@ -629,8 +693,9 @@ function drawMap() {
   for (const [a, b, c, d, k] of SP.lines()) if (k === 'net') { mctx.moveTo(...P(a, b)); mctx.lineTo(...P(c, d)); }
   mctx.stroke(); mctx.setLineDash([]);
   mctx.fillStyle = '#8aa3c4'; mctx.font = '12px sans-serif';
-  mctx.textAlign = 'left'; mctx.fillText('먼 쪽', ox, 14);
-  mctx.textAlign = 'right'; mctx.fillText('가까운 쪽 (카메라)', ox + (y1 - y0) * sc, 14); mctx.textAlign = 'left';
+  mctx.textAlign = 'left'; mctx.fillText(SP.mapLabels[0], ox, 14);
+  mctx.textAlign = 'right'; mctx.fillText(SP.mapLabels[1], ox + (y1 - y0) * sc, 14); mctx.textAlign = 'left';
+  if (ball && Hs) drawMapBounces(P, sc);
   if (!Hf) return;
   mctx.save(); mctx.beginPath(); mctx.rect(ox, oy, (y1 - y0) * sc, (x1 - x0) * sc); mctx.clip();
   for (const p of players) {
@@ -715,12 +780,209 @@ function renderLog() {
     rally.log.map(r => `<div><span>랠리 #${r.n}</span><b>${r.shots}샷 · ${r.time.toFixed(1)}초</b></div>`).join('');
 }
 
+// ---------- 탁구공 분석 (업로드한 영상) ----------
+// 영상을 처음부터 끝까지 한 번 재생하면서 프레임마다 공 후보를 모은 뒤, ball-core.js로 궤적·스트로크·바운드를 찾는다.
+function clearBall() {
+  ball = null;
+  $('ballCard').style.display = 'none';
+  setHudMode(false);
+}
+function setHudMode(auto) {
+  $('hudK2').textContent = auto ? 'STROKE (AUTO)' : 'SHOT COUNT'; $('hudU2').textContent = auto ? '회' : 'SHOT';
+  $('hudK3').textContent = auto ? 'BOUNCE' : 'RALLY'; $('hudU3').textContent = auto ? '회' : '#';
+}
+function progress(p, text) {
+  $('prog').classList.toggle('show', p != null);
+  if (p == null) return;
+  $('progBar').style.width = `${Math.round(p * 100)}%`;
+  $('progTxt').textContent = text || `공 분석 중… ${Math.round(p * 100)}%`;
+}
+const waitEvent = (el, ev) => new Promise(r => el.addEventListener(ev, r, { once: true }));
+async function seekTo(t) {
+  if (Math.abs(video.currentTime - t) < 1e-3) return;
+  const p = waitEvent(video, 'seeked'); video.currentTime = t; await p;
+}
+
+// 분석 해상도 기준의 탁구대 기하 정보
+function ballGeo(k) {
+  const C = SP.corners(calibRange());
+  const img = calibPts.map(([x, y]) => [x * k, y * k]);
+  const Hk = homography(img, C), Hki = homography(C, img);
+  const end = apply(Hki, CW / 2, 0), net = apply(Hki, CW / 2, CL / 2);
+  const ax = [net[0] - end[0], net[1] - end[1]], sNet = Math.hypot(...ax);
+  const real = [CW, C[2][1], CW, C[2][1]];
+  let sc = 0; for (let i = 0; i < 4; i++) { const a = img[i], b = img[(i + 1) % 4]; sc += Math.hypot(a[0] - b[0], a[1] - b[1]) / real[i]; }
+  return { axis: [ax[0] / sNet, ax[1] / sNet], origin: { x: end[0], y: end[1] }, sNet, scale: sc / 4,
+           toTable: (x, y) => apply(Hk, x, y), W: CW, L: CL };
+}
+
+async function runBallAnalysis() {
+  if (ballBusy || source !== 'file') return;
+  if (!Hs) { msg(`먼저 📐 ${SP.surface} 보정을 해주세요`, 3500); return; }
+  ballBusy = true; ballCancel = false; clearBall();
+  const vw = video.videoWidth, vh = video.videoHeight, k = PROC_W / vw;
+  const PW = PROC_W, PH = Math.round(vh * k);
+  const cv = document.createElement('canvas'); cv.width = PW; cv.height = PH;
+  const cx = cv.getContext('2d', { willReadFrequently: true });
+  const grab = () => { cx.drawImage(video, 0, 0, PW, PH); return luminance(cx.getImageData(0, 0, PW, PH).data, PW * PH); };
+
+  progress(0, '공 분석 준비 중…');
+  video.pause(); video.loop = false;
+  await seekTo(0);
+  // 이 기기가 프레임 하나를 처리하는 데 걸리는 시간으로 재생 속도를 정한다 (놓치는 프레임이 없도록)
+  let t0 = performance.now();
+  for (let i = 0; i < 3; i++) { const Y = grab(); detectCandidates(Y, Y, Y, PW, PH); }
+  const cost = (performance.now() - t0) / 3;
+  const rate = cost < 16 ? 1 : cost < 35 ? 0.5 : 0.25;
+
+  const raw = [], ring = [];
+  const useRVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+  let lastT = -1;
+  const onFrame = (_, meta) => {
+    if (!ballBusy) return;
+    const t = meta ? meta.mediaTime : video.currentTime;
+    if (t !== lastT) {
+      lastT = t;
+      ring.push({ t, Y: grab() }); if (ring.length > 3) ring.shift();
+      if (ring.length === 3) raw.push({ t: ring[1].t, c: detectCandidates(ring[0].Y, ring[1].Y, ring[2].Y, PW, PH) });
+      progress(Math.min(1, t / video.duration));
+    }
+    if (!video.ended && !ballCancel) useRVFC ? video.requestVideoFrameCallback(onFrame) : requestAnimationFrame(() => onFrame(0, null));
+  };
+  const ended = waitEvent(video, 'ended');
+  useRVFC ? video.requestVideoFrameCallback(onFrame) : requestAnimationFrame(() => onFrame(0, null));
+  video.playbackRate = rate;
+  await video.play();
+  await Promise.race([ended, new Promise(r => { const iv = setInterval(() => { if (ballCancel) { clearInterval(iv); r(); } }, 100); })]);
+  video.pause();
+  video.playbackRate = +$('selRate').value;
+
+  if (ballCancel || raw.length < 10) {
+    ballBusy = false; progress(null);
+    msg(ballCancel ? '공 분석을 취소했어요' : '프레임을 읽지 못했어요. 다른 브라우저로 시도해 보세요.', 3500);
+    return;
+  }
+  progress(1, '궤적 계산 중…');
+  await new Promise(r => setTimeout(r, 30));
+
+  // 프레임 간격으로 fps 추정 → 프레임 번호
+  const d = []; for (let i = 1; i < raw.length; i++) { const x = raw[i].t - raw[i - 1].t; if (x > 0.004) d.push(x); }
+  d.sort((a, b) => a - b);
+  const fps = clamp(Math.round(1 / (d[Math.floor(d.length * 0.25)] || 1 / 30)), 10, 240);
+  const seen = new Set(), frames = [];
+  for (const r of raw) { const f = Math.round(r.t * fps); if (!seen.has(f)) { seen.add(f); frames.push({ f, t: r.t, c: r.c }); } }
+
+  const geo = ballGeo(k);
+  const res = analyzeRally(frames, geo, fps);
+  const inv = 1 / k, scaleBack = p => ({ ...p, x: p.x * inv, y: p.y * inv });
+  const track = new Map([...ballTrack(res)].map(([f, p]) => [f, scaleBack(p)]));
+  ball = {
+    fps, track,
+    strokes: res.strokes.map(scaleBack),
+    bounces: res.bounces.map(b => ({ ...scaleBack(b) })),
+    incoming: res.incoming, frames: frames.length, dropped: Math.max(0, Math.round(video.duration * fps) - frames.length),
+    sideView: Math.abs(geo.axis[0]) > 0.6
+  };
+  ballBusy = false; progress(null);
+  await seekTo(0);
+  renderBallResults(); setHudMode(true);
+  msg(`공 분석 완료 · 스트로크 ${ball.strokes.length}회 · 바운드 ${ball.bounces.length}회. ▶ 재생하면 표시돼요`, 5000);
+}
+
+function renderBallResults() {
+  const b = ball, ok = b.strokes.filter(s => s.ok).length, weak = b.strokes.length - ok;
+  const missed = b.incoming.filter(i => i.missed).length;
+  const mine = b.bounces.filter(x => x.side === 'mine').length;
+  const t = f => { const s = f / b.fps; return `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`; };
+  $('ballRes').innerHTML = `
+    <div class="stats">
+      <div class="stat"><div class="k">스트로크</div><div class="v">${b.strokes.length}<small>회</small></div></div>
+      <div class="stat"><div class="k">네트 넘긴 공 / 약한 공</div><div class="v">${ok}<small>/ ${weak}</small></div></div>
+      <div class="stat"><div class="k">날아온 공 / 놓친 공</div><div class="v">${b.incoming.length}<small>/ ${missed}</small></div></div>
+      <div class="stat"><div class="k">바운드</div><div class="v">${b.bounces.length}<small>회 · 내 쪽 ${mine} · 상대 쪽 ${b.bounces.length - mine}</small></div></div>
+    </div>
+    <div class="lbl" style="font-size:11px;color:var(--muted);margin-bottom:4px">스트로크 순간 (누르면 그 장면으로 이동)</div>
+    <div class="chips">${b.strokes.map((s, i) => `<span class="chip${s.ok ? '' : ' weak'}" data-f="${s.f}">${i + 1} · ${t(s.f)}</span>`).join('') || '<span style="color:var(--muted);font-size:12px">찾은 스트로크가 없어요</span>'}</div>
+    ${b.sideView ? '' : '<div class="sub" style="color:#ffcf80;font-size:12px;margin-top:8px">⚠ 탁구대를 끝선 쪽에서 찍은 영상은 정확도가 떨어져요. 옆에서 찍으면 더 정확해요.</div>'}
+    ${b.dropped > b.frames * 0.15 ? '<div class="sub" style="color:#ffcf80;font-size:12px;margin-top:6px">⚠ 처리 속도가 느려 일부 프레임을 건너뛰었어요. 결과가 덜 정확할 수 있어요.</div>' : ''}`;
+  $('ballRes').querySelectorAll('.chip[data-f]').forEach(el => el.onclick = () => {
+    video.pause(); video.currentTime = Math.max(0, +el.dataset.f / ball.fps - 0.7); video.play();
+  });
+  $('ballCard').style.display = '';
+}
+
+// 탁구대 면 위의 원 (반지름 r m)
+function tableRing(u, v, r) {
+  ctx.beginPath();
+  for (let i = 0; i <= 28; i++) { const a = i / 28 * Math.PI * 2, q = apply(Hsinv, u + Math.cos(a) * r, v + Math.sin(a) * r); i ? ctx.lineTo(...q) : ctx.moveTo(...q); }
+}
+function drawBall(s) {
+  if (!ball || source !== 'file' || !Hsinv) return;
+  const fNow = Math.round(video.currentTime * ball.fps);
+  ctx.save();
+  // 바운드 원
+  const keep = $('optBounceKeep').checked;
+  const past = ball.bounces.filter(b => b.f <= fNow);
+  past.forEach((b, i) => {
+    const age = fNow - b.f, latest = i === past.length - 1;
+    const col = b.side === 'mine' ? '255,122,69' : '54,209,255';
+    if (age < 24) {   // 막 튄 공: 퍼지는 물결
+      const k = age / 24;
+      ctx.strokeStyle = `rgba(${col},${1 - k})`; ctx.lineWidth = 3 * s;
+      tableRing(b.u, b.v, 0.05 + k * 0.16); ctx.stroke();
+    }
+    if (keep || age < 45) {
+      ctx.globalAlpha = latest ? 1 : 0.55;
+      ctx.strokeStyle = `rgb(${col})`; ctx.lineWidth = (latest ? 3 : 2) * s;
+      ctx.shadowColor = `rgb(${col})`; ctx.shadowBlur = latest ? 12 * s : 0;
+      tableRing(b.u, b.v, 0.045); ctx.stroke();
+      ctx.fillStyle = `rgba(${col},.35)`; ctx.fill();
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+    }
+  });
+  // 공 궤적
+  if ($('optBallTrail').checked) {
+    for (let d = 7; d >= 0; d--) {
+      const p = ball.track.get(fNow - d); if (!p) continue;
+      ctx.globalAlpha = 1 - d / 8; ctx.fillStyle = d ? '#ffffff' : '#fff7b0';
+      ctx.beginPath(); ctx.arc(p.x, p.y, (d ? 5 : 8) * s, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+  // 스트로크 순간 표시
+  ball.strokes.forEach((st, i) => {
+    const age = fNow - st.f; if (age < 0 || age > 24) return;
+    ctx.globalAlpha = 1 - age / 24;
+    ctx.font = `bold ${30 * s}px sans-serif`; ctx.textAlign = 'center';
+    ctx.lineWidth = 5 * s; ctx.strokeStyle = 'rgba(0,0,0,.7)';
+    const txt = `STROKE ${i + 1}`, y = st.y - 30 * s - age * 1.5 * s;
+    ctx.strokeText(txt, st.x, y); ctx.fillStyle = st.ok ? '#4be38f' : '#ffb340'; ctx.fillText(txt, st.x, y);
+  });
+  ctx.restore();
+}
+function ballCounts() {
+  const fNow = Math.round(video.currentTime * ball.fps);
+  return [ball.strokes.filter(s => s.f <= fNow).length, ball.bounces.filter(b => b.f <= fNow).length];
+}
+function drawMapBounces(P, sc) {
+  const fNow = source === 'file' ? Math.round(video.currentTime * ball.fps) : Infinity;
+  const past = ball.bounces.filter(b => b.f <= fNow);
+  past.forEach((b, i) => {
+    const [x, y] = P(b.u, b.v), latest = i === past.length - 1;
+    mctx.globalAlpha = latest ? 1 : 0.6;
+    mctx.strokeStyle = b.side === 'mine' ? '#ff7a45' : '#36d1ff'; mctx.lineWidth = latest ? 2.5 : 1.5;
+    mctx.beginPath(); mctx.arc(x, y, latest ? 7 : 5, 0, 7); mctx.stroke();
+  });
+  mctx.globalAlpha = 1;
+}
+
 // ---------- 메인 루프 ----------
 let panelTick = 0, seeking = false;
 function loop() {
   requestAnimationFrame(loop);
   if (!source || video.readyState < 2) return;
   const t = now();
+  if (ballBusy) return;
   if (landmarker && !calibrating && video.currentTime !== lastVideoTime) {
     if (source === 'file' && video.currentTime < lastVideoTime) players.forEach(p => { p.prevCourt = null; p.active = false; });
     lastVideoTime = video.currentTime;
@@ -730,7 +992,8 @@ function loop() {
   draw(performance.now() / 1000);
   tickRally(t);
   $('hudTime').textContent = fmtClock(rally.elapsed);
-  $('hudShots').textContent = rally.shots; $('hudRally').textContent = rally.n;
+  if (ball && source === 'file') { const [st, bo] = ballCounts(); $('hudShots').textContent = st; $('hudRally').textContent = bo; }
+  else { $('hudShots').textContent = rally.shots; $('hudRally').textContent = rally.n; }
   if (++panelTick % 6 === 0) { updatePanels(); drawMap(); }
   if (source === 'file') {
     $('timeLbl').textContent = `${fmtT(video.currentTime)} / ${fmtT(video.duration)}`;
@@ -750,7 +1013,15 @@ $('btnPlay').onclick = () => video.paused ? video.play() : video.pause();
 $('seek').oninput = e => { seeking = true; if (video.duration) video.currentTime = e.target.value / 1000 * video.duration; };
 $('seek').onchange = () => { seeking = false; };
 $('selRate').onchange = e => { video.playbackRate = +e.target.value; };
-video.addEventListener('play', () => { video.playbackRate = +$('selRate').value; });
+video.addEventListener('play', () => { if (!ballBusy) video.playbackRate = +$('selRate').value; });
+video.addEventListener('error', () => msg('이 영상을 브라우저가 재생하지 못해요. 다른 브라우저(크롬 등)로 열거나, 휴대폰 카메라 설정에서 "호환성 우선(H.264)"으로 찍어 보세요.', 8000));
+$('btnBall').onclick = runBallAnalysis;
+$('btnBallCancel').onclick = () => { ballCancel = true; };
+$('selRange').onchange = e => {
+  store.set('range', e.target.value);
+  if (calibrating) { msg(calibMsg(calibPts.length)); return; }
+  if (Hs) { clearCalibration(); calibPts = []; msg(`보정 범위를 바꿨어요. 📐 ${SP.surface} 보정을 다시 해주세요`, 4000); }
+};
 $('btnRally').onclick = toggleRally;
 $('btnShot').onclick = addShot;
 document.addEventListener('keydown', e => {
