@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>AI 경기 분석</title>
+<style>
+:root{
+  --bg:#0b1220; --panel:rgba(14,26,46,.88); --line:#2a4a72; --text:#e8f1ff; --muted:#8aa3c4;
+  --accent:#36d1ff;
+}
+body.tt{--accent:#ff7a45;}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{background:var(--bg);color:var(--text);font-family:'Pretendard',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;overflow-x:hidden;}
+body{padding:12px 12px 40px;}
+.wrap{max-width:1100px;margin:0 auto;}
+header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;}
+header h1{font-size:18px;letter-spacing:.5px;}
+header h1 span{color:var(--accent);}
+a.back{color:var(--muted);font-size:13px;text-decoration:none;}
+a.back:hover{color:var(--text);}
+.btn{border:1px solid var(--line);background:#132542;color:var(--text);padding:9px 12px;border-radius:9px;font-size:13px;cursor:pointer;white-space:nowrap;}
+.btn:hover{border-color:var(--accent);}
+.btn.primary{background:var(--accent);color:#04121f;border-color:var(--accent);font-weight:700;}
+.btn.on{background:#1d3b66;border-color:var(--accent);}
+.btn.big{padding:14px 16px;font-size:16px;font-weight:700;}
+.btn:disabled{opacity:.4;cursor:default;}
+.toolbar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;align-items:center;}
+.toolbar .sep{flex:1;}
+select.btn{appearance:none;}
+#fileInput{display:none;}
+
+.stage{position:relative;width:100%;background:#000;border-radius:12px;overflow:hidden;aspect-ratio:16/9;}
+.stage video,.stage canvas{position:absolute;inset:0;width:100%;height:100%;}
+.stage video{object-fit:fill;}
+#overlay.calib{cursor:crosshair;}
+.empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--muted);text-align:center;padding:20px;font-size:14px;}
+.empty b{color:var(--text);font-size:16px;}
+.msg{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);background:rgba(0,0,0,.75);border:1px solid var(--accent);color:#fff;padding:8px 14px;border-radius:8px;font-size:13px;pointer-events:none;display:none;max-width:92%;text-align:center;}
+
+.hud{position:absolute;top:2.5%;left:2%;right:2%;display:flex;gap:6px;pointer-events:none;}
+.tile{flex:1;background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);padding:4px 8px;min-width:0;}
+.tile .k{font-size:clamp(8px,1.3vw,12px);color:var(--accent);letter-spacing:1px;font-weight:700;}
+.tile .v{font-size:clamp(14px,3.4vw,32px);font-weight:800;font-variant-numeric:tabular-nums;font-family:'DIN Condensed','Arial Narrow',sans-serif;line-height:1.05;}
+.tile .u{font-size:clamp(8px,1.2vw,11px);color:var(--muted);margin-left:4px;}
+
+.player{display:none;gap:8px;align-items:center;margin-top:8px;}
+.player.show{display:flex;}
+.player input[type=range]{flex:1;accent-color:var(--accent);}
+.player .t{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:86px;text-align:right;}
+
+.rally{display:flex;gap:8px;margin-top:10px;}
+.rally .btn{flex:1;}
+
+.panels{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;}
+@media(max-width:720px){.panels{grid-template-columns:1fr;}}
+.card{background:#0f1c33;border:1px solid var(--line);border-radius:12px;padding:12px;}
+.card h3{font-size:12px;letter-spacing:1px;color:var(--accent);margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;}
+.card h3 small{color:var(--muted);font-weight:400;letter-spacing:0;text-align:right;}
+.pl{border-left:3px solid var(--c);background:linear-gradient(90deg,rgba(255,255,255,.04),transparent);padding:6px 8px;margin-bottom:6px;}
+.pl .row{display:flex;align-items:baseline;justify-content:space-between;gap:6px;}
+.pl .name{color:var(--c);font-weight:800;font-size:16px;cursor:pointer;border-bottom:1px dashed transparent;}
+.pl .name:hover{border-bottom-color:var(--c);}
+.pl .lbl{font-size:11px;color:var(--muted);}
+.pl .score{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;}
+.pl .bar{height:3px;background:#22324d;margin:3px 0 5px;}
+.pl .bar i{display:block;height:100%;background:var(--c);width:0;transition:width .3s;}
+.pl .segs{display:flex;gap:2px;flex:1;margin:0 8px;}
+.pl .segs i{flex:1;height:7px;background:#22324d;}
+.pl .segs i.f{background:var(--c);}
+.pl .dist{font-size:12px;font-variant-numeric:tabular-nums;min-width:60px;text-align:right;}
+.pl .sub{font-size:11px;color:var(--muted);margin-top:2px;}
+.pl.off{opacity:.45;}
+#mapCanvas{width:100%;display:block;border-radius:6px;background:#0c1a30;}
+.log{font-size:12px;color:var(--muted);max-height:140px;overflow:auto;}
+.log div{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #1b2c48;}
+.log div b{color:var(--text);font-weight:600;}
+.help{font-size:12px;color:var(--muted);line-height:1.6;}
+.help b{color:var(--text);}
+.opts{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--muted);margin-top:8px;}
+.opts label{display:flex;gap:4px;align-items:center;cursor:pointer;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="title">AI 분석</h1>
+    <a class="back" href="index.html">← 종목 선택</a>
+  </header>
+
+  <div class="toolbar">
+    <button class="btn" id="btnCam">📷 실시간 카메라</button>
+    <button class="btn" id="btnFile">🎞️ 영상 불러오기</button>
+    <input type="file" id="fileInput" accept="video/*">
+    <span class="sep"></span>
+    <button class="btn" id="btnCalib" disabled>📐 보정</button>
+    <select class="btn" id="selModel" title="AI 모델">
+      <option value="lite">모델: 빠름</option>
+      <option value="full" selected>모델: 표준</option>
+      <option value="heavy">모델: 정밀</option>
+    </select>
+    <button class="btn" id="btnReset">↺ 기록 초기화</button>
+  </div>
+
+  <div class="stage" id="stage">
+    <video id="video" playsinline muted></video>
+    <canvas id="overlay"></canvas>
+    <div class="empty" id="empty">
+      <b>카메라를 켜거나 영상을 불러오세요</b>
+      <div id="tip"></div>
+    </div>
+    <div class="hud" id="hud" style="display:none">
+      <div class="tile"><div class="k">RALLY TIME</div><div class="v" id="hudTime">00:00.00</div></div>
+      <div class="tile"><div class="k">SHOT COUNT</div><div class="v"><span id="hudShots">0</span><span class="u">SHOT</span></div></div>
+      <div class="tile"><div class="k">RALLY</div><div class="v"><span id="hudRally">0</span><span class="u">#</span></div></div>
+    </div>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div class="player" id="player">
+    <button class="btn" id="btnPlay">▶</button>
+    <input type="range" id="seek" min="0" max="1000" value="0">
+    <span class="t" id="timeLbl">0:00 / 0:00</span>
+    <select class="btn" id="selRate" title="재생 속도">
+      <option value="0.25">0.25x</option>
+      <option value="0.5">0.5x</option>
+      <option value="1" selected>1x</option>
+    </select>
+  </div>
+
+  <div class="rally">
+    <button class="btn big" id="btnRally">▶ 랠리 시작</button>
+    <button class="btn big primary" id="btnShot">+1 샷</button>
+  </div>
+
+  <div class="panels">
+    <div class="card">
+      <h3>PLAYERS <small>이름을 누르면 바꿀 수 있어요</small></h3>
+      <div id="players"></div>
+    </div>
+    <div class="card">
+      <h3><span id="mapTitle">MAP</span> <small id="mapNote"></small></h3>
+      <canvas id="mapCanvas" width="640" height="360"></canvas>
+      <div class="opts">
+        <label><input type="checkbox" id="optSkel"> 골격 표시</label>
+        <label><input type="checkbox" id="optLines" checked> <span id="lblLines">라인 표시</span></label>
+        <label><input type="checkbox" id="optTrail" checked> 이동 경로</label>
+        <label><input type="checkbox" id="optFilter" checked> <span id="lblFilter">경기 구역 밖 사람 무시</span></label>
+      </div>
+    </div>
+    <div class="card">
+      <h3>RALLY LOG <small>Space: +1 샷 · Enter: 랠리 시작/종료</small></h3>
+      <div class="log" id="log"></div>
+    </div>
+    <div class="card">
+      <h3>사용법</h3>
+      <div class="help" id="help"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { PoseLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+const WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+const MODEL = k => `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_${k}/float16/1/pose_landmarker_${k}.task`;
+
+// ---------- 종목 설정 ----------
+// 좌표계: x = 가로(폭), y = 세로(길이, 0 = 먼 쪽, L = 카메라 쪽), 단위 m
+const SPORTS = {
+  badminton: {
+    name: '배드민턴', emoji: '🏸', W: 6.10, L: 13.40,
+    surfaceH: 0,                       // 보정하는 면의 높이 (바닥 = 0)
+    surface: '코트', calibWhat: '복식 코트 바깥', mapTitle: 'COURT MAP',
+    view: [-0.8, 6.9, -0.8, 14.2],     // 코트 맵에 보여줄 범위 [x0, x1, y0, y1]
+    zone: 1.5,                         // 이 거리보다 코트에서 멀면 다른 사람으로 보고 무시
+    ringR: 0.55, maxV: 9, actV: 4,
+    tip: '코트 뒤쪽 높은 곳에서 코트 전체가 보이게 찍으면 가장 정확해요.',
+    lines() {
+      const W = this.W, L = this.L, N = L / 2;
+      return [[0, 0, W, 0], [W, 0, W, L], [W, L, 0, L], [0, L, 0, 0],
+        [0.46, 0, 0.46, L], [W - 0.46, 0, W - 0.46, L],
+        [0, N - 1.98, W, N - 1.98], [0, N + 1.98, W, N + 1.98],
+        [0, 0.76, W, 0.76], [0, L - 0.76, W, L - 0.76],
+        [W / 2, 0, W / 2, N - 1.98], [W / 2, N + 1.98, W / 2, L],
+        [-0.3, N, W + 0.3, N, 'net']];
+    }
+  },
+  tabletennis: {
+    name: '탁구', emoji: '🏓', W: 1.525, L: 2.74,
+    surfaceH: 0.76,                    // 탁구대 윗면은 바닥에서 76cm 위
+    surface: '탁구대', calibWhat: '탁구대 윗면', mapTitle: 'TABLE MAP',
+    view: [-2.6, 4.125, -3.2, 5.94],
+    zone: 3.5,
+    ringR: 0.4, maxV: 7, actV: 2.5,
+    tip: '탁구대 끝 뒤쪽 높은 곳에서 탁구대와 선수 전체가 보이게 찍으세요.',
+    lines() {
+      const W = this.W, L = this.L, N = L / 2;
+      return [[0, 0, W, 0], [W, 0, W, L], [W, L, 0, L], [0, L, 0, 0],
+        [W / 2, 0, W / 2, L],
+        [-0.1525, N, W + 0.1525, N, 'net']];
+    }
+  }
+};
+const sportKey = new URLSearchParams(location.search).get('sport');
+const SP = SPORTS[sportKey];
+if (!SP) { location.replace('index.html'); throw new Error('unknown sport'); }
+
+const { W: CW, L: CL } = SP;
+const COLORS = ['#36d1ff', '#4be38f', '#b88cff', '#ffb340'];
+const MAX_P = 4;
+
+const $ = id => document.getElementById(id);
+const video = $('video'), ov = $('overlay'), ctx = ov.getContext('2d');
+const map = $('mapCanvas'), mctx = map.getContext('2d');
+
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(`${sportKey}_${k}`); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(`${sportKey}_${k}`, JSON.stringify(v)); } catch {} }
+};
+
+// 화면 문구를 종목에 맞게
+document.title = `${SP.name} AI 분석`;
+if (sportKey === 'tabletennis') document.body.classList.add('tt');
+$('title').innerHTML = `${SP.emoji} ${SP.name} <span>AI 분석</span>`;
+$('tip').textContent = SP.tip;
+$('btnCalib').textContent = `📐 ${SP.surface} 보정`;
+$('mapTitle').textContent = SP.mapTitle;
+$('lblLines').textContent = `${SP.surface} 라인 표시`;
+$('help').innerHTML = `
+  <b>1.</b> 카메라를 켜거나 영상을 불러옵니다.<br>
+  <b>2.</b> <b>📐 ${SP.surface} 보정</b>을 누르고 ${SP.calibWhat} 모서리 4곳을 순서대로 탭합니다:
+  <b>먼 쪽 왼쪽 → 먼 쪽 오른쪽 → 가까운 쪽 오른쪽 → 가까운 쪽 왼쪽</b>.<br>
+  ${SP.surfaceH > 0 ? '탁구대 높이(76cm)를 계산에 넣어 선수가 서 있는 바닥 위치를 자동으로 구해요. 모서리를 정확히 찍을수록 정확해집니다.<br>' : ''}
+  <b>3.</b> 보정이 끝나면 이동 거리(m), 속도, ${SP.mapTitle === 'TABLE MAP' ? '탁구대' : '코트'} 맵이 실제 단위로 계산됩니다.<br>
+  <b>4.</b> 샷은 <b>+1 샷</b> 버튼으로 셉니다. 공·셔틀콕 자동 추적은 지원하지 않아요.<br>
+  <b>활동량</b>은 최근 이동 속도로 계산한 0~100 지수입니다.`;
+
+// ---------- 상태 ----------
+let landmarker = null, modelKind = $('selModel').value, loadingModel = null;
+let source = null;            // 'cam' | 'file'
+let stream = null;
+let Hs = null, Hsinv = null;  // 보정 면(코트/탁구대): 화면 → 실제, 실제 → 화면
+let Hf = null, Hfinv = null;  // 바닥면 (선수가 서 있는 면)
+let calibPts = [], calibrating = false;
+let lastVideoTime = -1, lastTs = 0;
+let names = store.get('names', ['선수1', '선수2', '선수3', '선수4']);
+
+const players = Array.from({ length: MAX_P }, (_, i) => newPlayer(i));
+function newPlayer(i) {
+  return { id: i, active: false, lastSeen: -1e9, img: null, court: null, prevCourt: null, prevT: null,
+           dist: 0, speed: 0, maxSpeed: 0, activity: 0, trail: [], lm: null, head: null, scale: 40 };
+}
+
+// 랠리 시간은 앞으로 흘러간 시간만 더한다 (영상을 되감거나 반복 재생해도 음수가 되지 않게)
+const rally = { on: false, elapsed: 0, lastT: null, shots: 0, n: 0, log: [] };
+
+// ---------- 유틸 ----------
+function msg(text, ms) {
+  const m = $('msg'); m.textContent = text; m.style.display = text ? 'block' : 'none';
+  clearTimeout(msg._t); if (text && ms) msg._t = setTimeout(() => m.style.display = 'none', ms);
+}
+const fmtClock = s => { const m = Math.floor(s / 60), r = s - m * 60; return `${String(m).padStart(2, '0')}:${r.toFixed(2).padStart(5, '0')}`; };
+const fmtT = s => isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}` : '0:00';
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const now = () => source === 'file' ? video.currentTime : performance.now() / 1000;
+
+// 4점 호모그래피 (행 우선 3x3, 마지막 원소 1)
+function homography(src, dst) {
+  const A = [], b = [];
+  for (let i = 0; i < 4; i++) {
+    const [x, y] = src[i], [u, v] = dst[i];
+    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); b.push(u);
+    A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); b.push(v);
+  }
+  for (let c = 0; c < 8; c++) {
+    let p = c; for (let r = c + 1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    [A[c], A[p]] = [A[p], A[c]]; [b[c], b[p]] = [b[p], b[c]];
+    if (Math.abs(A[c][c]) < 1e-12) return null;
+    for (let r = 0; r < 8; r++) if (r !== c) {
+      const f = A[r][c] / A[c][c];
+      for (let k = c; k < 8; k++) A[r][k] -= f * A[c][k];
+      b[r] -= f * b[c];
+    }
+  }
+  return [...b.map((v, i) => v / A[i][i]), 1];
+}
+function apply(M, x, y) {
+  const w = M[6] * x + M[7] * y + M[8];
+  return [(M[0] * x + M[1] * y + M[2]) / w, (M[3] * x + M[4] * y + M[5]) / w];
+}
+function inverse3(M) {
+  const [a, b, c, d, e, f, g, h, i] = M;
+  const A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g;
+  const det = a * A + b * B + c * C;
+  if (Math.abs(det) < 1e-15) return null;
+  return [A, -(b * i - c * h), b * f - c * e, B, a * i - c * g, -(a * f - c * d), C, -(a * h - b * g), a * e - b * d].map(v => v / det);
+}
+
+// 높이가 있는 면(탁구대 윗면)의 호모그래피에서 카메라를 추정해 바닥면 호모그래피를 만든다.
+// 주점 = 화면 중앙, 정사각 픽셀을 가정하고 초점거리를 직교 조건으로 구한다.
+function floorFromRaised(G, w, h, dz) {
+  const cx = w / 2, cy = h / 2;
+  const g = [G[0] - cx * G[6], G[1] - cx * G[7], G[2] - cx * G[8], G[3] - cy * G[6], G[4] - cy * G[7], G[5] - cy * G[8], G[6], G[7], G[8]];
+  const [a1, b1, c1] = [g[0], g[3], g[6]], [a2, b2, c2] = [g[1], g[4], g[7]];
+  const ests = [];
+  if (Math.abs(c1 * c2) > 1e-12) { const f2 = -(a1 * a2 + b1 * b2) / (c1 * c2); if (f2 > 0) ests.push(f2); }
+  if (Math.abs(c1 * c1 - c2 * c2) > 1e-12) { const f2 = (a2 * a2 + b2 * b2 - a1 * a1 - b1 * b1) / (c1 * c1 - c2 * c2); if (f2 > 0) ests.push(f2); }
+  const f = clamp(ests.length ? Math.sqrt(ests.reduce((s, v) => s + v) / ests.length) : w * 0.9, w * 0.3, w * 5);
+  const k = (a, b, c) => [a / f, b / f, c], nrm = v => Math.hypot(...v);
+  let r1 = k(a1, b1, c1), r2 = k(a2, b2, c2), t = k(g[2], g[5], g[8]);
+  let lam = 2 / (nrm(r1) + nrm(r2)); if (t[2] * lam < 0) lam = -lam;   // 물체는 카메라 앞에 있어야 함
+  r1 = r1.map(v => v * lam); r2 = r2.map(v => v * lam); t = t.map(v => v * lam);
+  let r3 = [r1[1] * r2[2] - r1[2] * r2[1], r1[2] * r2[0] - r1[0] * r2[2], r1[0] * r2[1] - r1[1] * r2[0]];
+  const n3 = nrm(r3); r3 = r3.map(v => v / n3);
+  // 바닥은 화면에서 더 아래쪽으로 보이는 방향
+  const projY = Z => { const p = [0, 1, 2].map(i => r1[i] * CW / 2 + r2[i] * CL / 2 + r3[i] * Z + t[i]); return f * p[1] / p[2]; };
+  const s = projY(dz) > projY(-dz) ? 1 : -1;
+  const tf = t.map((v, i) => v + r3[i] * s * dz);
+  return [f * r1[0] + cx * r1[2], f * r2[0] + cx * r2[2], f * tf[0] + cx * tf[2],
+          f * r1[1] + cy * r1[2], f * r2[1] + cy * r2[2], f * tf[1] + cy * tf[2],
+          r1[2], r2[2], tf[2]];
+}
+
+const CORNERS = [[0, 0], [CW, 0], [CW, CL], [0, CL]];
+function setCalibration(pts) {
+  Hs = homography(pts, CORNERS); Hsinv = homography(CORNERS, pts);
+  if (Hs && Hsinv) {
+    if (SP.surfaceH > 0) { Hfinv = floorFromRaised(Hsinv, ov.width, ov.height, SP.surfaceH); Hf = inverse3(Hfinv); }
+    else { Hf = Hs; Hfinv = Hsinv; }
+  }
+  if (!Hs || !Hsinv || !Hf || !Hfinv) { Hs = Hsinv = Hf = Hfinv = null; msg('보정 실패: 점을 다시 찍어주세요', 3000); return false; }
+  calibPts = pts; return true;
+}
+function clearCalibration() { Hs = Hsinv = Hf = Hfinv = null; }
+
+// ---------- 모델 ----------
+async function loadModel(kind) {
+  if (landmarker && modelKind === kind) return landmarker;
+  if (loadingModel) await loadingModel.catch(() => {});
+  modelKind = kind;
+  msg('AI 모델 불러오는 중…');
+  loadingModel = (async () => {
+    const fs = await FilesetResolver.forVisionTasks(WASM);
+    const opts = d => ({
+      baseOptions: { modelAssetPath: MODEL(kind), delegate: d },
+      runningMode: 'VIDEO', numPoses: MAX_P,
+      minPoseDetectionConfidence: 0.35, minPosePresenceConfidence: 0.35, minTrackingConfidence: 0.35
+    });
+    let lm;
+    try { lm = await PoseLandmarker.createFromOptions(fs, opts('GPU')); }
+    catch (e) { console.warn('GPU 실패, CPU 사용', e); lm = await PoseLandmarker.createFromOptions(fs, opts('CPU')); }
+    if (landmarker) landmarker.close();
+    landmarker = lm; lastVideoTime = -1;
+    return lm;
+  })();
+  try { await loadingModel; msg('', 0); }
+  catch (e) { console.error(e); msg('모델을 불러오지 못했어요. 인터넷 연결을 확인하세요.'); }
+  finally { loadingModel = null; }
+  return landmarker;
+}
+
+// ---------- 입력 ----------
+function stopSource() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  video.pause();
+  if (video.src && video.src.startsWith('blob:')) URL.revokeObjectURL(video.src);
+  video.removeAttribute('src'); video.srcObject = null;
+}
+async function startCamera() {
+  stopSource();
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false
+    });
+  } catch (e) {
+    msg('카메라를 열 수 없어요. 권한과 https 접속을 확인하세요.', 5000); return;
+  }
+  source = 'cam'; video.srcObject = stream;
+  $('btnCam').classList.add('on'); $('btnFile').classList.remove('on');
+  $('player').classList.remove('show');
+  await video.play();
+  onSourceReady('cam');
+}
+function startFile(file) {
+  stopSource();
+  source = 'file'; video.src = URL.createObjectURL(file);
+  $('btnFile').classList.add('on'); $('btnCam').classList.remove('on');
+  $('player').classList.add('show');
+  video.addEventListener('loadeddata', () => { onSourceReady('file'); video.play(); }, { once: true });
+}
+function onSourceReady(kind) {
+  ov.width = video.videoWidth; ov.height = video.videoHeight;
+  $('stage').style.aspectRatio = `${video.videoWidth}/${video.videoHeight}`;
+  $('empty').style.display = 'none'; $('hud').style.display = 'flex';
+  $('btnCalib').disabled = false;
+  resetStats(false);
+  const saved = store.get('calib_' + kind, null);
+  if (saved && saved.w === ov.width && saved.h === ov.height && setCalibration(saved.pts)) {
+    msg(`저장된 ${SP.surface} 보정을 불러왔어요. 화면이 바뀌었다면 다시 보정하세요.`, 3500);
+  } else { clearCalibration(); calibPts = []; if (!calibrating) msg(`📐 ${SP.surface} 보정을 하면 이동 거리(m)를 잴 수 있어요`, 4000); }
+  loadModel(modelKind);
+}
+
+// ---------- 보정 ----------
+const CALIB_TXT = ['먼 쪽 왼쪽', '먼 쪽 오른쪽', '가까운 쪽 오른쪽', '가까운 쪽 왼쪽'];
+function startCalib() {
+  calibrating = true; calibPts = []; clearCalibration();
+  if (source === 'file') video.pause();
+  ov.classList.add('calib'); $('btnCalib').classList.add('on');
+  msg(`1/4 · ${SP.calibWhat} ${CALIB_TXT[0]} 모서리를 탭하세요`);
+}
+function cancelCalib() {
+  calibrating = false; ov.classList.remove('calib'); $('btnCalib').classList.remove('on'); msg('', 0);
+  const saved = store.get('calib_' + source, null);
+  if (saved && saved.w === ov.width && saved.h === ov.height) setCalibration(saved.pts);
+}
+ov.addEventListener('pointerdown', e => {
+  if (!calibrating) return;
+  const r = ov.getBoundingClientRect();
+  calibPts.push([(e.clientX - r.left) / r.width * ov.width, (e.clientY - r.top) / r.height * ov.height]);
+  if (calibPts.length < 4) { msg(`${calibPts.length + 1}/4 · ${CALIB_TXT[calibPts.length]} 모서리를 탭하세요`); return; }
+  calibrating = false; ov.classList.remove('calib'); $('btnCalib').classList.remove('on');
+  if (setCalibration(calibPts.slice())) {
+    store.set('calib_' + source, { w: ov.width, h: ov.height, pts: calibPts });
+    resetStats(false);
+    msg(`${SP.surface} 보정 완료! 라인이 ${SP.surface}와 맞는지 확인하세요`, 3500);
+  }
+});
+
+// ---------- 추적 ----------
+const L_ANK = 27, R_ANK = 28, L_HEEL = 29, R_HEEL = 30, L_SH = 11, R_SH = 12, L_HIP = 23, R_HIP = 24;
+function footPoint(lm, w, h) {
+  const vis = i => (lm[i].visibility ?? 1) > 0.3;
+  const pts = [L_ANK, R_ANK, L_HEEL, R_HEEL].filter(vis).map(i => [lm[i].x * w, lm[i].y * h]);
+  if (!pts.length) {
+    // 발이 안 보이면 엉덩이에서 아래로 추정
+    if (!vis(L_HIP) && !vis(R_HIP)) return null;
+    const hx = (lm[L_HIP].x + lm[R_HIP].x) / 2 * w, hy = (lm[L_HIP].y + lm[R_HIP].y) / 2 * h;
+    const sy = (lm[L_SH].y + lm[R_SH].y) / 2 * h;
+    return [hx, hy + (hy - sy) * 1.6];
+  }
+  return [pts.reduce((a, p) => a + p[0], 0) / pts.length, Math.max(...pts.map(p => p[1]))];
+}
+
+function updateTracks(result, t) {
+  const w = ov.width, h = ov.height, Z = SP.zone;
+  const dets = [];
+  for (const lm of result.landmarks || []) {
+    const f = footPoint(lm, w, h); if (!f) continue;
+    const c = Hf ? apply(Hf, f[0], f[1]) : null;
+    if (c && $('optFilter').checked && (c[0] < -Z || c[0] > CW + Z || c[1] < -Z || c[1] > CL + Z)) continue;
+    const ys = lm.map(p => p.y * h), xs = lm.map(p => p.x * w);
+    const head = [xs[0], Math.min(...ys)];
+    const scale = Math.max(20, Math.hypot(lm[L_SH].x * w - lm[R_SH].x * w, lm[L_SH].y * h - lm[R_SH].y * h));
+    dets.push({ lm, img: f, court: c, head, scale });
+  }
+  // 거리 (보정 시 m 단위, 아니면 화면 비율)
+  const dist = (p, d) => {
+    if (d.court && p.court) return Math.hypot(d.court[0] - p.court[0], d.court[1] - p.court[1]);
+    if (!p.img) return Infinity;
+    return Math.hypot(d.img[0] - p.img[0], d.img[1] - p.img[1]) / w * 10;
+  };
+  const pairs = [];
+  dets.forEach((d, di) => players.forEach((p, pi) => {
+    if (p.lastSeen < -1e8) return;
+    const gap = Math.abs(t - p.lastSeen);
+    const limit = p.active ? 1.6 + gap * 4 : 3.5;
+    const dd = dist(p, d); if (dd < limit) pairs.push([dd + (p.active ? 0 : 1), di, pi]);
+  }));
+  pairs.sort((a, b) => a[0] - b[0]);
+  const usedD = new Set(), usedP = new Set();
+  for (const [, di, pi] of pairs) {
+    if (usedD.has(di) || usedP.has(pi)) continue;
+    usedD.add(di); usedP.add(pi); assign(players[pi], dets[di], t);
+  }
+  dets.forEach((d, di) => {
+    if (usedD.has(di)) return;
+    const free = players.find(p => !usedP.has(p.id) && p.lastSeen < -1e8) ||
+                 players.filter(p => !usedP.has(p.id) && t - p.lastSeen > 1.5).sort((a, b) => a.lastSeen - b.lastSeen)[0];
+    if (free) { usedP.add(free.id); free.prevCourt = null; assign(free, d, t); }
+  });
+  for (const p of players) {
+    if (!usedP.has(p.id)) {
+      p.lm = null;
+      if (t - p.lastSeen > 0.8) p.active = false;
+      p.activity *= 0.97;
+    }
+  }
+}
+
+function assign(p, d, t) {
+  const a = 0.5; // 발 위치 흔들림 보정
+  p.img = p.img && p.active ? [p.img[0] * (1 - a) + d.img[0] * a, p.img[1] * (1 - a) + d.img[1] * a] : d.img;
+  p.court = Hf ? apply(Hf, p.img[0], p.img[1]) : null;
+  p.lm = d.lm; p.head = d.head; p.scale = d.scale;
+  p.active = true; p.lastSeen = t;
+  if (p.court) {
+    if (p.prevCourt && p.prevT != null) {
+      const dt = t - p.prevT;
+      const dd = Math.hypot(p.court[0] - p.prevCourt[0], p.court[1] - p.prevCourt[1]);
+      if (dt > 0 && dt < 1) {
+        const v = dd / dt;
+        if (v < SP.maxV) {               // 사람이 낼 수 없는 속도는 오검출로 보고 무시
+          if (dd > 0.04) p.dist += dd;
+          p.speed = p.speed * 0.8 + v * 0.2;
+          p.maxSpeed = Math.max(p.maxSpeed, p.speed);
+        }
+      }
+    }
+    p.prevCourt = p.court; p.prevT = t;
+    const last = p.trail[p.trail.length - 1];
+    if (!last || Math.hypot(last[0] - p.court[0], last[1] - p.court[1]) > 0.08) {
+      p.trail.push([...p.court, t]);
+      if (p.trail.length > 400) p.trail.shift();
+    }
+    p.activity = p.activity * 0.95 + clamp(p.speed / SP.actV, 0, 1) * 100 * 0.05;
+  }
+}
+
+function resetStats(clearRally = true) {
+  players.forEach((p, i) => Object.assign(p, newPlayer(i)));
+  if (clearRally) { Object.assign(rally, { on: false, elapsed: 0, lastT: null, shots: 0, n: 0, log: [] }); renderLog(); updateRallyBtn(); }
+}
+
+// ---------- 그리기 ----------
+function draw(t) {
+  const w = ov.width, h = ov.height, s = w / 1000;
+  ctx.clearRect(0, 0, w, h);
+  if (Hsinv && $('optLines').checked) drawSurfaceLines(s);
+  if (calibrating) {
+    ctx.fillStyle = '#ffd400'; ctx.strokeStyle = '#ffd400'; ctx.lineWidth = 2 * s;
+    calibPts.forEach((p, i) => {
+      ctx.beginPath(); ctx.arc(p[0], p[1], 7 * s, 0, 7); ctx.fill();
+      ctx.font = `bold ${16 * s}px sans-serif`; ctx.fillText(i + 1, p[0] + 10 * s, p[1] - 10 * s);
+    });
+    if (calibPts.length > 1) { ctx.beginPath(); calibPts.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p)); ctx.stroke(); }
+  }
+  for (const p of players) {
+    if (!p.active || !p.img) continue;
+    const c = COLORS[p.id];
+    if ($('optSkel').checked && p.lm) drawSkeleton(p.lm, c, s);
+    drawRing(p, c, s, t);
+    drawLabel(p, c, s);
+  }
+}
+
+function drawSurfaceLines(s) {
+  const lines = SP.lines();
+  ctx.save();
+  ctx.strokeStyle = 'rgba(54,209,255,.6)'; ctx.lineWidth = 1.5 * s; ctx.beginPath();
+  for (const [x1, y1, x2, y2, k] of lines) if (!k) { ctx.moveTo(...apply(Hsinv, x1, y1)); ctx.lineTo(...apply(Hsinv, x2, y2)); }
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = 2.5 * s; ctx.beginPath();
+  for (const [x1, y1, x2, y2, k] of lines) if (k === 'net') { ctx.moveTo(...apply(Hsinv, x1, y1)); ctx.lineTo(...apply(Hsinv, x2, y2)); }
+  ctx.stroke();
+  ctx.restore();
+}
+
+// 바닥 위 원(실제 반지름 r m)을 화면에 투영
+function floorPt(p, a, r) {
+  if (Hfinv && p.court) return apply(Hfinv, p.court[0] + Math.cos(a) * r, p.court[1] + Math.sin(a) * r);
+  const rx = p.scale * r * 2.4;
+  return [p.img[0] + Math.cos(a) * rx, p.img[1] + Math.sin(a) * rx * 0.3];
+}
+function ringPath(p, r) {
+  ctx.beginPath();
+  for (let i = 0; i <= 36; i++) { const q = floorPt(p, i / 36 * Math.PI * 2, r); i ? ctx.lineTo(...q) : ctx.moveTo(...q); }
+}
+function drawRing(p, c, s, t) {
+  const R = SP.ringR;
+  ctx.save();
+  ctx.shadowColor = c; ctx.shadowBlur = 18 * s;
+  ctx.strokeStyle = c; ctx.lineWidth = 4 * s; ringPath(p, R); ctx.stroke();
+  ctx.globalAlpha = 0.18; ctx.fillStyle = c; ctx.fill();
+  ctx.globalAlpha = 0.7; ctx.shadowBlur = 0; ctx.lineWidth = 1.5 * s; ringPath(p, R * 0.55); ctx.stroke();
+  // 회전하는 흰 호
+  ctx.globalAlpha = 1; ctx.strokeStyle = '#fff'; ctx.lineWidth = 3 * s;
+  const a0 = (t * 2) % (Math.PI * 2);
+  ctx.beginPath();
+  for (let i = 0; i <= 10; i++) { const q = floorPt(p, a0 + i / 10 * 1.1, R); i ? ctx.lineTo(...q) : ctx.moveTo(...q); }
+  ctx.stroke();
+  ctx.restore();
+}
+function drawLabel(p, c, s) {
+  if (!p.head) return;
+  const name = names[p.id], val = String(Math.round(p.activity));
+  const fs = 15 * s, pad = 6 * s;
+  ctx.save(); ctx.font = `bold ${fs}px sans-serif`;
+  const bw = ctx.measureText(name).width + ctx.measureText(val).width + pad * 4, bh = fs + pad * 2 + 4 * s;
+  const x = p.head[0] - bw / 2, y = p.head[1] - bh - 16 * s;
+  ctx.fillStyle = 'rgba(10,20,36,.85)'; ctx.fillRect(x, y, bw, bh);
+  ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1 * s; ctx.strokeRect(x, y, bw, bh);
+  ctx.fillStyle = c; ctx.fillRect(x, y, 3 * s, bh);
+  ctx.fillStyle = '#fff'; ctx.textBaseline = 'top'; ctx.fillText(name, x + pad * 1.5, y + pad);
+  ctx.font = `bold ${fs * 0.8}px sans-serif`; ctx.textAlign = 'right'; ctx.fillText(val, x + bw - pad, y + pad);
+  ctx.fillStyle = '#22324d'; ctx.fillRect(x + pad * 1.5, y + bh - 6 * s, bw - pad * 3, 3 * s);
+  ctx.fillStyle = c; ctx.fillRect(x + pad * 1.5, y + bh - 6 * s, (bw - pad * 3) * p.activity / 100, 3 * s);
+  ctx.beginPath(); ctx.moveTo(p.head[0] - 6 * s, y + bh + 4 * s); ctx.lineTo(p.head[0] + 6 * s, y + bh + 4 * s); ctx.lineTo(p.head[0], y + bh + 11 * s); ctx.fill();
+  ctx.restore();
+}
+const BONES = PoseLandmarker.POSE_CONNECTIONS;
+function drawSkeleton(lm, c, s) {
+  const w = ov.width, h = ov.height;
+  ctx.save(); ctx.strokeStyle = c; ctx.globalAlpha = 0.8; ctx.lineWidth = 2 * s; ctx.beginPath();
+  for (const { start, end } of BONES) {
+    if ((lm[start].visibility ?? 1) < 0.3 || (lm[end].visibility ?? 1) < 0.3) continue;
+    ctx.moveTo(lm[start].x * w, lm[start].y * h); ctx.lineTo(lm[end].x * w, lm[end].y * h);
+  }
+  ctx.stroke(); ctx.restore();
+}
+
+// 위에서 본 맵 (가로 방향: 왼쪽 = 먼 쪽, 오른쪽 = 카메라 쪽)
+function drawMap() {
+  const MW = map.width, MH = map.height, top = 22, m = 10;
+  const [x0, x1, y0, y1] = SP.view;
+  const sc = Math.min((MW - m * 2) / (y1 - y0), (MH - top - m) / (x1 - x0));
+  const ox = (MW - (y1 - y0) * sc) / 2, oy = top + (MH - top - m - (x1 - x0) * sc) / 2;
+  const P = (x, y) => [ox + (y - y0) * sc, oy + (x - x0) * sc];
+  mctx.clearRect(0, 0, MW, MH);
+  mctx.fillStyle = '#10203a'; mctx.fillRect(ox, oy, (y1 - y0) * sc, (x1 - x0) * sc);
+  const [sx, sy] = P(0, 0);
+  mctx.fillStyle = sportKey === 'tabletennis' ? '#1a4a8a' : '#163058';
+  mctx.fillRect(sx, sy, CL * sc, CW * sc);
+  mctx.strokeStyle = 'rgba(255,255,255,.75)'; mctx.lineWidth = 1.5; mctx.beginPath();
+  for (const [a, b, c, d, k] of SP.lines()) if (!k) { mctx.moveTo(...P(a, b)); mctx.lineTo(...P(c, d)); }
+  mctx.stroke();
+  mctx.setLineDash([5, 4]); mctx.strokeStyle = '#fff'; mctx.lineWidth = 2; mctx.beginPath();
+  for (const [a, b, c, d, k] of SP.lines()) if (k === 'net') { mctx.moveTo(...P(a, b)); mctx.lineTo(...P(c, d)); }
+  mctx.stroke(); mctx.setLineDash([]);
+  mctx.fillStyle = '#8aa3c4'; mctx.font = '12px sans-serif';
+  mctx.textAlign = 'left'; mctx.fillText('먼 쪽', ox, 14);
+  mctx.textAlign = 'right'; mctx.fillText('가까운 쪽 (카메라)', ox + (y1 - y0) * sc, 14); mctx.textAlign = 'left';
+  if (!Hf) return;
+  mctx.save(); mctx.beginPath(); mctx.rect(ox, oy, (y1 - y0) * sc, (x1 - x0) * sc); mctx.clip();
+  for (const p of players) {
+    const c = COLORS[p.id];
+    if ($('optTrail').checked && p.trail.length > 1) {
+      mctx.strokeStyle = c; mctx.globalAlpha = 0.5; mctx.lineWidth = 1.5; mctx.beginPath();
+      p.trail.slice(-120).forEach((q, i) => i ? mctx.lineTo(...P(q[0], q[1])) : mctx.moveTo(...P(q[0], q[1])));
+      mctx.stroke(); mctx.globalAlpha = 1;
+    }
+    if (!p.court || p.lastSeen < -1e8) continue;
+    const [x, y] = P(p.court[0], p.court[1]);
+    mctx.globalAlpha = p.active ? 1 : 0.35;
+    mctx.fillStyle = c; mctx.beginPath(); mctx.arc(x, y, 7, 0, 7); mctx.fill();
+    mctx.strokeStyle = '#fff'; mctx.lineWidth = 1.5; mctx.stroke();
+    mctx.globalAlpha = 1;
+  }
+  mctx.restore();
+}
+
+// ---------- 패널 ----------
+function buildPlayers() {
+  $('players').innerHTML = players.map(p => `
+    <div class="pl" id="pl${p.id}" style="--c:${COLORS[p.id]}">
+      <div class="row"><span class="name" data-i="${p.id}"></span>
+        <span><span class="lbl">활동량 </span><span class="score" id="sc${p.id}">0</span></span></div>
+      <div class="bar"><i id="ab${p.id}"></i></div>
+      <div class="row"><span class="lbl">MOVE</span>
+        <span class="segs" id="sg${p.id}">${'<i></i>'.repeat(20)}</span>
+        <span class="dist" id="ds${p.id}">0.0 m</span></div>
+      <div class="sub" id="sb${p.id}">대기 중</div>
+    </div>`).join('');
+  document.querySelectorAll('.pl .name').forEach(el => {
+    const i = +el.dataset.i; el.textContent = names[i];
+    el.onclick = () => {
+      const v = prompt('선수 이름', names[i]);
+      if (v && v.trim()) { names[i] = v.trim().slice(0, 12); el.textContent = names[i]; store.set('names', names); }
+    };
+  });
+}
+function updatePanels() {
+  const maxD = Math.max(sportKey === 'tabletennis' ? 5 : 10, ...players.map(p => p.dist));
+  for (const p of players) {
+    $('pl' + p.id).classList.toggle('off', !p.active);
+    $('sc' + p.id).textContent = Math.round(p.activity);
+    $('ab' + p.id).style.width = p.activity + '%';
+    $('ds' + p.id).textContent = Hf ? p.dist.toFixed(1) + ' m' : '— m';
+    const n = Math.round(p.dist / maxD * 20);
+    [...$('sg' + p.id).children].forEach((s, i) => s.classList.toggle('f', i < n));
+    $('sb' + p.id).textContent = p.lastSeen < -1e8 ? '대기 중'
+      : !Hf ? (p.active ? `감지됨 · ${SP.surface} 보정 필요` : '화면 밖')
+      : `속도 ${p.speed.toFixed(1)} m/s · 최고 ${p.maxSpeed.toFixed(1)} m/s${p.active ? '' : ' · 화면 밖'}`;
+  }
+  $('mapNote').textContent = Hf ? '실시간 위치' : `${SP.surface} 보정 후 표시`;
+}
+
+// ---------- 랠리 ----------
+function tickRally(t) {
+  if (!rally.on) return;
+  const dt = rally.lastT == null ? 0 : t - rally.lastT;
+  if (dt > 0 && dt < 1) rally.elapsed += dt;
+  rally.lastT = t;
+}
+function toggleRally() {
+  if (!rally.on) {
+    rally.on = true; rally.lastT = source ? now() : null; rally.elapsed = 0; rally.shots = 0; rally.n++;
+  } else {
+    if (source) tickRally(now()); rally.on = false;
+    rally.log.unshift({ n: rally.n, time: rally.elapsed, shots: rally.shots });
+    renderLog();
+  }
+  updateRallyBtn();
+}
+function addShot() { if (!rally.on) toggleRally(); rally.shots++; }
+function updateRallyBtn() {
+  $('btnRally').textContent = rally.on ? '■ 랠리 종료' : '▶ 랠리 시작';
+  $('btnRally').classList.toggle('on', rally.on);
+}
+function renderLog() {
+  if (!rally.log.length) { $('log').innerHTML = '<div><span>아직 기록된 랠리가 없어요</span></div>'; return; }
+  const avg = rally.log.reduce((a, r) => a + r.shots, 0) / rally.log.length;
+  $('log').innerHTML = `<div><span>평균 ${avg.toFixed(1)}샷 · 최장 ${Math.max(...rally.log.map(r => r.shots))}샷</span></div>` +
+    rally.log.map(r => `<div><span>랠리 #${r.n}</span><b>${r.shots}샷 · ${r.time.toFixed(1)}초</b></div>`).join('');
+}
+
+// ---------- 메인 루프 ----------
+let panelTick = 0, seeking = false;
+function loop() {
+  requestAnimationFrame(loop);
+  if (!source || video.readyState < 2) return;
+  const t = now();
+  if (landmarker && !calibrating && video.currentTime !== lastVideoTime) {
+    if (source === 'file' && video.currentTime < lastVideoTime) players.forEach(p => { p.prevCourt = null; p.active = false; });
+    lastVideoTime = video.currentTime;
+    let ts = performance.now(); if (ts <= lastTs) ts = lastTs + 1; lastTs = ts;
+    try { updateTracks(landmarker.detectForVideo(video, ts), t); } catch (e) { console.error(e); }
+  }
+  draw(performance.now() / 1000);
+  tickRally(t);
+  $('hudTime').textContent = fmtClock(rally.elapsed);
+  $('hudShots').textContent = rally.shots; $('hudRally').textContent = rally.n;
+  if (++panelTick % 6 === 0) { updatePanels(); drawMap(); }
+  if (source === 'file') {
+    $('timeLbl').textContent = `${fmtT(video.currentTime)} / ${fmtT(video.duration)}`;
+    if (!seeking && video.duration) $('seek').value = video.currentTime / video.duration * 1000;
+    $('btnPlay').textContent = video.paused ? '▶' : '❚❚';
+  }
+}
+
+// ---------- 이벤트 ----------
+$('btnCam').onclick = startCamera;
+$('btnFile').onclick = () => $('fileInput').click();
+$('fileInput').onchange = e => { const f = e.target.files[0]; if (f) startFile(f); e.target.value = ''; };
+$('btnCalib').onclick = () => calibrating ? cancelCalib() : startCalib();
+$('selModel').onchange = e => { if (source) loadModel(e.target.value); else modelKind = e.target.value; };
+$('btnReset').onclick = () => { if (confirm('이동 거리와 랠리 기록을 모두 지울까요?')) resetStats(true); };
+$('btnPlay').onclick = () => video.paused ? video.play() : video.pause();
+$('seek').oninput = e => { seeking = true; if (video.duration) video.currentTime = e.target.value / 1000 * video.duration; };
+$('seek').onchange = () => { seeking = false; };
+$('selRate').onchange = e => { video.playbackRate = +e.target.value; };
+video.addEventListener('play', () => { video.playbackRate = +$('selRate').value; });
+$('btnRally').onclick = toggleRally;
+$('btnShot').onclick = addShot;
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.code === 'Space') { e.preventDefault(); addShot(); }
+  else if (e.code === 'Enter') { e.preventDefault(); toggleRally(); }
+});
+
+buildPlayers(); drawMap(); renderLog(); updatePanels(); requestAnimationFrame(loop);
+</script>
+</body>
+</html>
